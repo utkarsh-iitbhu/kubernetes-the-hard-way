@@ -24,30 +24,30 @@ class State(Enum):
     NONE = 0
     SCRIPT = 1
 
-parser = argparse.ArgumentParser(description="Extract scripts from markdown")
-parser.add_argument("--path", '-p', required=True, help='Path to markdown docs')
-args = parser.parse_args()
-
-docs_path = os.path.abspath(args.path)
+this_file_dir = os.path.dirname(os.path.abspath(__file__))
+docs_path = os.path.abspath(os.path.join(this_file_dir, '../docs'))
 
 if not os.path.isdir(docs_path):
-    print (f'Invalid path: {docs_path}')
+    print (f'Expected "docs" at: {docs_path}')
     exit(1)
 
-qs_path = os.path.abspath(os.path.join(docs_path, '../quick-steps'))
+qs_path = os.path.abspath(os.path.join(this_file_dir, '../quick-steps'))
 
 if not os.path.isdir(qs_path):
     os.makedirs(qs_path)
 
 newline = chr(10)       # In case running on Windows (plus writing files as binary to not convert to \r\n)
 file_number_rx = re.compile(r'^(?P<number>\d+)')
-comment_rx = re.compile(r'^\[//\]:\s\#\s\((?P<token>\w+):(?P<value>[^\)]+)\)')
+comment_rx = re.compile(r'^\[//\]:\s\#\s\((?P<token>\w+):(?P<value>.*)\)\s*$')
 choice_rx = re.compile(r'^\s*-+\s+OR\s+-+')
+ssh_copy_id_rx = re.compile(r'(?P<indent>\s*)ssh-copy-id.*@(?P<host>\w+)')
+script_begin_rx = re.compile(r'^(?P<indent>\s*)```bash')
 script_begin = '```bash'
 script_end = '```'
 script_open = ('{' + newline).encode('utf-8')
-script_close = '}'.encode('utf-8')
+script_close = '\n}'.encode('utf-8')
 current_host = None
+file_nos = []
 
 def write_script(filename: str, script: list):
     path = os.path.join(qs_path, filename)
@@ -57,18 +57,33 @@ def write_script(filename: str, script: list):
         f.write(script_close)
     print(f'-> {path}')
 
-
-for doc in glob.glob(os.path.join(docs_path, '*.md')):
+output_file_no = 1
+script = []
+indent = 0
+output_file = None
+for doc in sorted(glob.glob(os.path.join(docs_path, '*.md'))):
+    if 'e2e-tests' in doc:
+        # Skip this for scripted install
+        continue
     print(doc)
-    script = []
     state = State.NONE
     ignore_next_script = False
     m = file_number_rx.search(os.path.basename(doc))
     if not m:
         continue
     file_no = m['number']
+    if int(file_no) < 3:
+        continue
+    file_nos.append(file_no)
     section = 0
-    output_file = None
+    script.extend([
+        "##################################################",
+        "#",
+        f"# {os.path.basename(doc)}",
+        "#",
+        "##################################################",
+        ""
+    ])
     with codecs.open(doc, "r", encoding='utf-8') as f:
         for line in f.readlines():
             line = line.rstrip()
@@ -78,11 +93,24 @@ for doc in glob.glob(os.path.join(docs_path, '*.md')):
                     token = m['token']
                     value = m['value']
                     if token == 'host':
-                        if script:
+                        if script and current_host and current_host != value:
+                            #fns = file_no if len(file_nos) < 2 else '-'.join(file_nos[:-1])
+                            script.append('set +e')
+                            output_file = os.path.join(qs_path, f'{output_file_no}-{current_host}.sh')
                             write_script(output_file, script)
-                            script = []
+                            output_file_no += 1
+                            script = [
+                                "##################################################",
+                                "#",
+                                f"# {os.path.basename(doc)}",
+                                "#",
+                                "##################################################",
+                                ""
+                            ]
+                            file_nos = [file_no]
                         output_file = os.path.join(qs_path, f'{file_no}{chr(97 + section)}-{value}.sh')
                         section += 1
+                        current_host = value
                     elif token == 'sleep':
                         script.extend([
                             f'echo "Sleeping {value}s"',
@@ -103,17 +131,29 @@ for doc in glob.glob(os.path.join(docs_path, '*.md')):
                             '#######################################################################',
                             newline
                         ])
-                elif line == script_begin:
+                elif script_begin_rx.match(line):
+                    m = script_begin_rx.match(line)
+                    indent = len(m['indent'])
                     state = State.SCRIPT
                 elif choice_rx.match(line):
                     ignore_next_script = True
             elif state == State.SCRIPT:
-                if line == script_end:
+                if line == (' ' * indent) + script_end:
                     state = State.NONE
                     script.append(newline)
                     ignore_next_script = False
-                elif not (ignore_next_script or line == '{' or line == '}'):
-                    script.append(line)
-        if output_file and script:
-            write_script(output_file, script)
+                # elif line.startswith('source') or line.startswith('export'):
+                #     script.append('}')
+                #     script.append(line)
+                #     script.append('{')
+                elif not (ignore_next_script or line == (' ' * indent) + '{' or line == (' ' * indent) + '}'):
+                    m = ssh_copy_id_rx.match(line)
+                    if m:
+                        script.append(f'{m["indent"]}echo $(whoami) | sshpass ssh-copy-id -f -o StrictHostKeyChecking=no $(whoami)@{m["host"]}')
+                    else:
+                        script.append(line[indent:])
+if script:
+    # fns = '-'.join(file_nos[1:])
+    output_file = os.path.join(qs_path, f'{output_file_no}-{current_host}.sh')
+    write_script(output_file, script)
 

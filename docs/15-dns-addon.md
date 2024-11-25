@@ -4,11 +4,11 @@ In this lab you will deploy the [DNS add-on](https://kubernetes.io/docs/concepts
 
 ## The DNS Cluster Add-on
 
-[//]: # (host:master-1)
+[//]: # (host:controlplane01)
 
 Deploy the `coredns` cluster add-on:
 
-Note that if you have [changed the service CIDR range](./01-prerequisites.md#service-network) and thus this file, you will need to save your copy onto `master-1` (paste to vi, then save) and apply that.
+Note that if you have [changed the service CIDR range](./01-prerequisites.md#service-network) and thus this file, you will need to save your copy onto `controlplane01` (paste to vi, then save) and apply that.
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/mmumshad/kubernetes-the-hard-way/master/deployments/coredns.yaml
@@ -48,7 +48,7 @@ Reference: https://kubernetes.io/docs/tasks/administer-cluster/coredns/#installi
 Create a `busybox` pod:
 
 ```bash
-kubectl run busybox --image=busybox:1.28 --command -- sleep 3600
+kubectl run busybox -n default --image=busybox:1.28 --restart Never --command -- sleep 180
 ```
 
 [//]: # (command:kubectl wait pods -n default -l run=busybox --for condition=Ready --timeout=90s)
@@ -57,7 +57,7 @@ kubectl run busybox --image=busybox:1.28 --command -- sleep 3600
 List the pod created by the `busybox` pod:
 
 ```bash
-kubectl get pods -l run=busybox
+kubectl get pods -n default -l run=busybox
 ```
 
 > output
@@ -70,7 +70,7 @@ busybox-bd8fb7cbd-vflm9   1/1     Running   0          10s
 Execute a DNS lookup for the `kubernetes` service inside the `busybox` pod:
 
 ```bash
-kubectl exec -ti busybox -- nslookup kubernetes
+kubectl exec -ti -n default busybox -- nslookup kubernetes
 ```
 
 > output
@@ -83,5 +83,5 @@ Name:      kubernetes
 Address 1: 10.96.0.1 kubernetes.default.svc.cluster.local
 ```
 
-Prev: [Kube API Server to Kubelet Connectivity](14-kube-apiserver-to-kubelet.md)</br>
-Next: [Smoke Test](16-smoke-test.md)
+Next: [Smoke Test](./16-smoke-test.md)</br>
+Prev: [Kube API Server to Kubelet Connectivity](./14-kube-apiserver-to-kubelet.md)
